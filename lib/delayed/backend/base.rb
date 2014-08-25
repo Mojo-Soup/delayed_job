@@ -91,6 +91,20 @@ module Delayed
       def payload_object=(object)
         @payload_object = object
         self.handler = object.to_yaml
+
+        # START: Enhancements for Soup Mail
+
+        # Save the job type to a field in the database record, for easy
+        # querying later.
+        self.job_type = object.class.to_s
+        # Save the value of the first parameter of the handler as the subject
+        # ID.
+        self.subject_id = object.to_a.first
+        # Save the UUID of the request
+        self.uuid = Thread::current[:request_uuid] if Thread::current[:request_uuid]
+
+        # END: Enhancements for Soup Mail
+
       end
 
       def payload_object
