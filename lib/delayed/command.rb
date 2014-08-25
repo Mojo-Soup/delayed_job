@@ -60,8 +60,14 @@ module Delayed
         opt.on('--queues=queues', 'Specify which queue DJ must look up for jobs') do |queues|
           @options[:queues] = queues.split(',')
         end
+        opt.on('--priority-queues=queues', 'Specify which queue DJ must look up for URGENT jobs') do |priority_queues|
+          @options[:priority_queues] = priority_queues.split(',')
+        end
         opt.on('--queue=queue', 'Specify which queue DJ must look up for jobs') do |queue|
           @options[:queues] = queue.split(',')
+        end
+        opt.on('--priority-queue=queue', 'Specify which queue DJ must look up for URGENT jobs') do |priority_queue|
+          @options[:priority_queues] = priority_queue.split(',')
         end
         opt.on('--pool=queue1[,queue2][:worker_count]', 'Specify queues and number of workers for a worker pool') do |pool|
           parse_worker_pool(pool)

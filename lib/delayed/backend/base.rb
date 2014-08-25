@@ -1,3 +1,5 @@
+require 'socket'
+
 module Delayed
   module Backend
     module Base
@@ -63,6 +65,14 @@ module Delayed
           warn '[DEPRECATION] `Delayed::Job.work_off` is deprecated. Use `Delayed::Worker.new.work_off instead.'
           Delayed::Worker.new.work_off(num)
         end
+
+        def get_local_ip_address
+          @@rand ||= Random.new(Time.current.to_i).rand
+          # TODO: Currently ignores IPv6, only handles IPv4
+          set = Socket.ip_address_list.reject{ |ip| ip.ip_address =~ /127\.0\.0\./ }.reject{ |ip| ip.ip_address =~ /:/ }
+          set.empty? ? "#{@@rand}/#{Process.pid}" : "#{set[0].ip_address}/#{Process.pid}"
+        end
+
       end
 
       def failed?
@@ -138,6 +148,14 @@ module Delayed
 
       def fail!
         update_attributes(:failed_at => self.class.db_time_now)
+      end
+
+      def resubmit_as_urgent!(preferred_worker, new_queue)
+        self.urgent_worker = preferred_worker
+        self.queue = new_queue
+        unlock
+        save!
+        raise ResubmitJobError
       end
 
     protected

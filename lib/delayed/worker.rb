@@ -15,10 +15,12 @@ module Delayed
     DEFAULT_DEFAULT_PRIORITY = 0
     DEFAULT_DELAY_JOBS       = true
     DEFAULT_QUEUES           = []
+    DEFAULT_PRIORITY_QUEUES  = []
+    DEFAULT_IGNORE_PRIORITY  = 20.minutes
     DEFAULT_READ_AHEAD       = 5
 
     cattr_accessor :min_priority, :max_priority, :max_attempts, :max_run_time,
-                   :default_priority, :sleep_delay, :logger, :delay_jobs, :queues,
+                   :default_priority, :sleep_delay, :logger, :delay_jobs, :queues, :priority_queues, :ignore_priority,
                    :read_ahead, :plugins, :destroy_failed_jobs, :exit_on_complete
 
     # Named queue into which jobs are enqueued by default
@@ -36,6 +38,8 @@ module Delayed
       self.default_priority = DEFAULT_DEFAULT_PRIORITY
       self.delay_jobs       = DEFAULT_DELAY_JOBS
       self.queues           = DEFAULT_QUEUES
+      self.priority_queues  = DEFAULT_PRIORITY_QUEUES
+      self.ignore_priority  = DEFAULT_IGNORE_PRIORITY
       self.read_ahead       = DEFAULT_READ_AHEAD
     end
 
@@ -108,7 +112,8 @@ module Delayed
       @quiet = options.key?(:quiet) ? options[:quiet] : true
       @failed_reserve_count = 0
 
-      [:min_priority, :max_priority, :sleep_delay, :read_ahead, :queues, :exit_on_complete].each do |option|
+      [:min_priority, :max_priority, :sleep_delay, :read_ahead, :queues, :priority_queues, :ignore_priority,
+                                                                          :exit_on_complete].each do |option|
         self.class.send("#{option}=", options[option]) if options.key?(option)
       end
 
@@ -205,6 +210,9 @@ module Delayed
       end
       job_say job, format('COMPLETED after %.4f', runtime)
       return true  # did work
+    rescue ResubmitJobError
+      job_say job, 'RESUBMITTED'
+      return true
     rescue DeserializationError => error
       job.last_error = "#{error.message}\n#{error.backtrace.join("\n")}"
       failed(job)
