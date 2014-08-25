@@ -129,7 +129,7 @@ module Delayed
     # it crashed before.
     def name
       # Override the logging to simplify it just to the PID
-      return "pid:#{Process.pid}"
+      return Process.pid.to_s
 
       return @name unless @name.nil?
       "#{@name_prefix}host:#{Socket.gethostname} pid:#{Process.pid}" rescue "#{@name_prefix}pid:#{Process.pid}" # rubocop:disable RescueModifier
@@ -270,14 +270,14 @@ module Delayed
     end
 
     def say(text, level = DEFAULT_LOG_LEVEL)
-      text = "[Worker(#{name})] #{text}"
+      text = "(#{name}) #{text}"
       puts text unless @quiet
       return unless logger
       # TODO: Deprecate use of Fixnum log levels
       unless level.is_a?(String)
         level = Logger::Severity.constants.detect { |i| Logger::Severity.const_get(i) == level }.to_s.downcase
       end
-      logger.send(level, "#{Time.now.strftime('%FT%T%z')}: #{text}")
+      logger.send(level, text)
     end
 
     def max_attempts(job)

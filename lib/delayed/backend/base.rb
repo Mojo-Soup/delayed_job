@@ -101,7 +101,8 @@ module Delayed
         # ID.
         self.subject_id = object.to_a.first
         # Save the UUID of the request
-        self.uuid = Thread::current[:request_uuid] if Thread::current[:request_uuid]
+        self.uuid = object.uuid if object.respond_to?(:uuid)
+        self.uuid ||= Thread::current[:request_uuid] if Thread::current[:request_uuid]
 
         # END: Enhancements for Soup Mail
 
