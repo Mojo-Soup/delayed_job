@@ -28,6 +28,9 @@ module Delayed
 
     cattr_reader :backend
 
+    # Tagged logging
+    cattr_accessor :tagged_logger
+
     # name_prefix is ignored if name is set directly
     attr_accessor :name_prefix
 
@@ -125,6 +128,9 @@ module Delayed
     # safely resume working on tasks which are locked by themselves. The worker will assume that
     # it crashed before.
     def name
+      # Override the logging to simplify it just to the PID
+      return "pid:#{Process.pid}"
+
       return @name unless @name.nil?
       "#{@name_prefix}host:#{Socket.gethostname} pid:#{Process.pid}" rescue "#{@name_prefix}pid:#{Process.pid}" # rubocop:disable RescueModifier
     end
@@ -203,20 +209,30 @@ module Delayed
     end
 
     def run(job)
-      job_say job, 'RUNNING'
-      runtime =  Benchmark.realtime do
-        Timeout.timeout(self.class.max_run_time.to_i, WorkerTimeout) { job.invoke_job }
-        job.destroy
-      end
-      job_say job, format('COMPLETED after %.4f', runtime)
+
+      # Use UUID and tagged logging
+      Thread::current[:request_uuid] = job.uuid if job.respond_to?(:uuid) and job.uuid
+
+      tagged_logger.tagged("#{Thread::current[:request_uuid]}") {
+        job_say job, 'RUNNING'
+        runtime =  Benchmark.realtime do
+          Timeout.timeout(self.class.max_run_time.to_i, WorkerTimeout) { job.invoke_job }
+          job.destroy
+        end
+        job_say job, format('COMPLETED after %.4f', runtime)
+      }
+      Thread::current[:request_uuid] = nil
       return true  # did work
     rescue ResubmitJobError
+      Thread::current[:request_uuid] = nil
       job_say job, 'RESUBMITTED'
       return true
     rescue DeserializationError => error
+      Thread::current[:request_uuid] = nil
       job.last_error = "#{error.message}\n#{error.backtrace.join("\n")}"
       failed(job)
     rescue => error
+      Thread::current[:request_uuid] = nil
       self.class.lifecycle.run_callbacks(:error, self, job) { handle_failed_job(job, error) }
       return false  # work failed
     end
