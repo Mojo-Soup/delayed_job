@@ -67,10 +67,13 @@ module Delayed
         end
 
         def get_local_ip_address
-          @@rand ||= Random.new(Time.current.to_i).rand
+          pid = Process.pid
+          tid = ::Thread.current[:id] || ::Thread.current.object_id % 10000
+          # Use TLS, as it's unique per-thread
+          ::Thread.current[:rand] ||= Random.new(Time.current.to_i).rand
           # TODO: Currently ignores IPv6, only handles IPv4
           set = Socket.ip_address_list.reject{ |ip| ip.ip_address =~ /127\.0\.0\./ }.reject{ |ip| ip.ip_address =~ /:/ }
-          set.empty? ? "#{@@rand}/#{Process.pid}" : "#{set[0].ip_address}/#{Process.pid}"
+          set.empty? ? "#{::Thread.current[:rand]}/#{pid}/#{tid}" : "#{set[0].ip_address}/#{pid}/#{tid}"
         end
 
       end
