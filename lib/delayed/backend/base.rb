@@ -173,6 +173,21 @@ module Delayed
         self.queue = new_queue
         unlock
         save!
+
+        # Handle urgent jobs for related folders in a much-more efficient manner
+        if job_type == 'SoupSync::SyncFolderJob' && subject_id
+          regex = %r{^(\d+)/\d+$}.match(subject_id)
+          raise ResubmitJobError unless regex
+          user_id = regex[1]
+          c = ::ActiveRecord::Base.connection
+          r=c.execute(
+            "UPDATE delayed_jobs SET urgent_worker='#{preferred_worker}', " \
+            "queue='#{new_queue}' WHERE job_type='SoupSync::SyncFolderJob' " \
+            "AND subject_id LIKE '#{user_id}/%' AND locked_by IS NULL AND " \
+            'failed_at IS NULL')
+          affected_rows = r.cmd_tuples
+        end
+
         raise ResubmitJobError
       end
 
