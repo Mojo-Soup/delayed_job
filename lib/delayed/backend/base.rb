@@ -170,6 +170,7 @@ module Delayed
 
       def resubmit_as_urgent!(preferred_worker, new_queue)
         self.urgent_worker = preferred_worker
+        old_queue = self.queue
         self.queue = new_queue
         unlock
         save!
@@ -180,11 +181,16 @@ module Delayed
           raise ResubmitJobError unless regex
           user_id = regex[1]
           c = ::ActiveRecord::Base.connection
-          r=c.execute(
-            "UPDATE delayed_jobs SET urgent_worker='#{preferred_worker}', " \
-            "queue='#{new_queue}' WHERE job_type='SoupSync::SyncFolderJob' " \
-            "AND subject_id LIKE '#{user_id}/%' AND locked_by IS NULL AND " \
-            'failed_at IS NULL')
+          limit = Delayed::Worker.max_reschedule
+
+          # Use an advisory lock to avoid locking any records that are already locked
+          # NOTE: Postgres specific ('pg_try_advisory_lock', 'cmd_tuples')
+          subquery = "SELECT id FROM delayed_jobs WHERE job_type='SoupSync::SyncFolderJob'" \
+                     "AND queue='#{old_queue}' AND subject_id LIKE '#{user_id}/%' " \
+                     'AND locked_by IS NULL AND failed_at IS NULL ' \
+                     "AND pg_try_advisory_lock(id) LIMIT #{limit} FOR UPDATE"
+          query = "UPDATE delayed_jobs SET urgent_worker='#{preferred_worker}', queue='#{new_queue}' WHERE id IN (#{subquery})"
+          r=c.execute(query)
           affected_rows = r.cmd_tuples
         end
 

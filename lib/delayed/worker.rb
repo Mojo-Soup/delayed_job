@@ -18,10 +18,11 @@ module Delayed
     DEFAULT_PRIORITY_QUEUES  = []
     DEFAULT_IGNORE_PRIORITY  = 20.minutes
     DEFAULT_READ_AHEAD       = 5
+    DEFAULT_MAX_RESCHEDULE   = 10
 
     cattr_accessor :min_priority, :max_priority, :max_attempts, :max_run_time,
                    :default_priority, :sleep_delay, :logger, :delay_jobs, :queues, :priority_queues, :ignore_priority,
-                   :read_ahead, :plugins, :destroy_failed_jobs, :exit_on_complete
+                   :read_ahead, :plugins, :destroy_failed_jobs, :exit_on_complete, :max_reschedule
 
     # Named queue into which jobs are enqueued by default
     cattr_accessor :default_queue_name
@@ -44,6 +45,7 @@ module Delayed
       self.priority_queues  = DEFAULT_PRIORITY_QUEUES
       self.ignore_priority  = DEFAULT_IGNORE_PRIORITY
       self.read_ahead       = DEFAULT_READ_AHEAD
+      self.max_reschedule   = DEFAULT_MAX_RESCHEDULE
     end
 
     reset
@@ -116,7 +118,7 @@ module Delayed
       @failed_reserve_count = 0
 
       [:min_priority, :max_priority, :sleep_delay, :read_ahead, :queues, :priority_queues, :ignore_priority,
-                                                                          :exit_on_complete].each do |option|
+                                                   :max_reschedule, :exit_on_complete].each do |option|
         self.class.send("#{option}=", options[option]) if options.key?(option)
       end
 
@@ -270,6 +272,7 @@ module Delayed
     end
 
     def say(text, level = DEFAULT_LOG_LEVEL)
+
       text = "(#{name}) #{text}"
       puts text unless @quiet
       return unless logger
