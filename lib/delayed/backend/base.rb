@@ -189,7 +189,8 @@ module Delayed
                      "AND queue='#{old_queue}' AND subject_id LIKE '#{user_id}/%' " \
                      'AND locked_by IS NULL AND failed_at IS NULL ' \
                      "AND pg_try_advisory_lock(id) LIMIT #{limit} FOR UPDATE"
-          query = "UPDATE delayed_jobs SET urgent_worker='#{preferred_worker}', queue='#{new_queue}' WHERE id IN (#{subquery})"
+          query = "UPDATE delayed_jobs SET urgent_worker='#{preferred_worker}', queue='#{new_queue}' WHERE id IN (#{subquery}); " \
+                  'SELECT pg_advisory_unlock_all();'
           r=c.execute(query)
           affected_rows = r.cmd_tuples
         end
