@@ -6,15 +6,19 @@ unless ENV['RAILS_ENV'] == 'test'
   end
 end
 require 'optparse'
+require 'pathname'
 
 module Delayed
   class Command # rubocop:disable ClassLength
     attr_accessor :worker_count, :worker_pools
 
+    DIR_PWD = Pathname.new Dir.pwd
+
     def initialize(args) # rubocop:disable MethodLength
       @options = {
         :quiet => true,
-        :pid_dir => "#{Rails.root}/tmp/pids"
+        :pid_dir => "#{root}/tmp/pids",
+        :log_dir => "#{root}/log"
       }
 
       @worker_count = 1
@@ -37,10 +41,13 @@ module Delayed
           @options[:max_priority] = n
         end
         opt.on('-n', '--number_of_workers=workers', 'Number of unique workers to spawn') do |worker_count|
-          @worker_count = worker_count.to_i rescue 1 # rubocop:disable RescueModifier
+          @worker_count = worker_count.to_i rescue 1
         end
         opt.on('--pid-dir=DIR', 'Specifies an alternate directory in which to store the process ids.') do |dir|
           @options[:pid_dir] = dir
+        end
+        opt.on('--log-dir=DIR', 'Specifies an alternate directory in which to store the delayed_job log.') do |dir|
+          @options[:log_dir] = dir
         end
         opt.on('-i', '--identifier=n', 'A numeric identifier for the worker.') do |n|
           @options[:identifier] = n
@@ -93,7 +100,7 @@ module Delayed
         setup_pools
       elsif @options[:identifier]
         if worker_count > 1
-          fail(ArgumentError.new('Cannot specify both --number-of-workers and --identifier'))
+          raise ArgumentError, 'Cannot specify both --number-of-workers and --identifier'
         else
           run_process("delayed_job.#{@options[:identifier]}", @options)
         end
@@ -121,23 +128,24 @@ module Delayed
       Delayed::Worker.before_fork
       Daemons.run_proc(process_name, :dir => options[:pid_dir], :dir_mode => :normal, :monitor => @monitor, :ARGV => @args) do |*_args|
         $0 = File.join(options[:prefix], process_name) if @options[:prefix]
-        run process_name
+        run process_name, options
       end
     end
 
     def run(worker_name = nil, options = {})
-      Dir.chdir(Rails.root)
+      Dir.chdir(root)
 
       Delayed::Worker.after_fork
-      Delayed::Worker.logger ||= Logger.new(File.join(Rails.root, 'log', 'delayed_job.log'))
+      Delayed::Worker.logger ||= Logger.new(File.join(@options[:log_dir], 'delayed_job.log'))
 
       worker = Delayed::Worker.new(options)
       worker.name_prefix = "#{worker_name} "
       worker.start
     rescue => e
-      Rails.logger.fatal e
       STDERR.puts e.message
-      exit 1
+      STDERR.puts e.backtrace
+      ::Rails.logger.fatal(e) if rails_logger_defined?
+      exit_with_error_status
     end
 
   private
@@ -153,6 +161,22 @@ module Delayed
       end
       worker_count = (worker_count || 1).to_i rescue 1
       @worker_pools << [queues, worker_count]
+    end
+
+    def root
+      @root ||= rails_root_defined? ? ::Rails.root : DIR_PWD
+    end
+
+    def rails_root_defined?
+      defined?(::Rails.root)
+    end
+
+    def rails_logger_defined?
+      defined?(::Rails.logger)
+    end
+
+    def exit_with_error_status
+      exit 1
     end
   end
 end

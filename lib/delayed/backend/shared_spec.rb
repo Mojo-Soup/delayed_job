@@ -14,6 +14,7 @@ shared_examples_for 'a delayed_job backend' do
     Delayed::Worker.min_priority = nil
     Delayed::Worker.default_priority = 99
     Delayed::Worker.delay_jobs = true
+    Delayed::Worker.default_queue_name = 'default_tracking'
     SimpleJob.runs = 0
     described_class.delete_all
   end
@@ -62,8 +63,18 @@ shared_examples_for 'a delayed_job backend' do
       end
 
       it 'is able to set queue' do
-        job = described_class.enqueue :payload_object => SimpleJob.new, :queue => 'tracking'
+        job = described_class.enqueue :payload_object => NamedQueueJob.new, :queue => 'tracking'
         expect(job.queue).to eq('tracking')
+      end
+
+      it 'uses default queue' do
+        job = described_class.enqueue :payload_object => SimpleJob.new
+        expect(job.queue).to eq(Delayed::Worker.default_queue_name)
+      end
+
+      it "uses the payload object's queue" do
+        job = described_class.enqueue :payload_object => NamedQueueJob.new
+        expect(job.queue).to eq(NamedQueueJob.new.queue_name)
       end
     end
 
@@ -150,7 +161,7 @@ shared_examples_for 'a delayed_job backend' do
       job = described_class.enqueue(CallbackJob.new)
       expect(job.payload_object).to receive(:perform).and_raise(RuntimeError.new('fail'))
 
-      expect { job.invoke_job }.to raise_error
+      expect { job.invoke_job }.to raise_error(RuntimeError)
       expect(CallbackJob.messages).to eq(['enqueue', 'before', 'error: RuntimeError', 'after'])
     end
 
@@ -175,8 +186,16 @@ shared_examples_for 'a delayed_job backend' do
 
     it 'raises a DeserializationError when the YAML.load raises argument error' do
       job = described_class.new :handler => '--- !ruby/struct:GoingToRaiseArgError {}'
-      expect(YAML).to receive(:load).and_raise(ArgumentError)
+      expect(YAML).to receive(:load_dj).and_raise(ArgumentError)
       expect { job.payload_object }.to raise_error(Delayed::DeserializationError)
+    end
+
+    it 'raises a DeserializationError when the YAML.load raises syntax error' do
+      # only test with Psych since the other YAML parsers don't raise a SyntaxError
+      if YAML.parser.class.name !~ /syck|yecht/i
+        job = described_class.new :handler => 'message: "no ending quote'
+        expect { job.payload_object }.to raise_error(Delayed::DeserializationError)
+      end
     end
   end
 
@@ -398,9 +417,64 @@ shared_examples_for 'a delayed_job backend' do
       expect(@job.max_attempts).to be_nil
     end
 
-    it 'uses the max_retries value on the payload when defined' do
+    it 'uses the max_attempts value on the payload when defined' do
       expect(@job.payload_object).to receive(:max_attempts).and_return(99)
       expect(@job.max_attempts).to eq(99)
+    end
+  end
+
+  describe '#max_run_time' do
+    before(:each) { @job = described_class.enqueue SimpleJob.new }
+
+    it 'is not defined' do
+      expect(@job.max_run_time).to be_nil
+    end
+
+    it 'results in a default run time when not defined' do
+      expect(worker.max_run_time(@job)).to eq(Delayed::Worker::DEFAULT_MAX_RUN_TIME)
+    end
+
+    it 'uses the max_run_time value on the payload when defined' do
+      expect(@job.payload_object).to receive(:max_run_time).and_return(30.minutes)
+      expect(@job.max_run_time).to eq(30.minutes)
+    end
+
+    it 'results in an overridden run time when defined' do
+      expect(@job.payload_object).to receive(:max_run_time).and_return(45.minutes)
+      expect(worker.max_run_time(@job)).to eq(45.minutes)
+    end
+
+    it 'job set max_run_time can not exceed default max run time' do
+      expect(@job.payload_object).to receive(:max_run_time).and_return(Delayed::Worker::DEFAULT_MAX_RUN_TIME + 60)
+      expect(worker.max_run_time(@job)).to eq(Delayed::Worker::DEFAULT_MAX_RUN_TIME)
+    end
+  end
+
+  describe 'destroy_failed_jobs' do
+    context 'with a SimpleJob' do
+      before(:each) do
+        @job = described_class.enqueue SimpleJob.new
+      end
+
+      it 'is not defined' do
+        expect(@job.destroy_failed_jobs?).to be true
+      end
+
+      it 'uses the destroy failed jobs value on the payload when defined' do
+        expect(@job.payload_object).to receive(:destroy_failed_jobs?).and_return(false)
+        expect(@job.destroy_failed_jobs?).to be false
+      end
+    end
+
+    context 'with a job that raises DserializationError' do
+      before(:each) do
+        @job = described_class.new :handler => '--- !ruby/struct:GoingToRaiseArgError {}'
+      end
+
+      it 'falls back reasonably' do
+        expect(YAML).to receive(:load_dj).and_raise(ArgumentError)
+        expect(@job.destroy_failed_jobs?).to be true
+      end
     end
   end
 
@@ -409,14 +483,20 @@ shared_examples_for 'a delayed_job backend' do
       it 'raises error ArgumentError for new records' do
         story = Story.new(:text => 'hello')
         if story.respond_to?(:new_record?)
-          expect { story.delay.tell }.to raise_error(ArgumentError, 'Jobs cannot be created for non-persisted records')
+          expect { story.delay.tell }.to raise_error(
+            ArgumentError,
+            "job cannot be created for non-persisted record: #{story.inspect}"
+          )
         end
       end
 
       it 'raises error ArgumentError for destroyed records' do
         story = Story.create(:text => 'hello')
         story.destroy
-        expect { story.delay.tell }.to raise_error(ArgumentError, 'Jobs cannot be created for non-persisted records')
+        expect { story.delay.tell }.to raise_error(
+          ArgumentError,
+          "job cannot be created for non-persisted record: #{story.inspect}"
+        )
       end
     end
 
@@ -448,6 +528,7 @@ shared_examples_for 'a delayed_job backend' do
         Delayed::Worker.max_run_time = 1.second
         job = Delayed::Job.create :payload_object => LongRunningJob.new
         worker.run(job)
+        expect(job.error).to_not be_nil
         expect(job.reload.last_error).to match(/expired/)
         expect(job.reload.last_error).to match(/Delayed::Worker\.max_run_time is only 1 second/)
         expect(job.attempts).to eq(1)
@@ -461,6 +542,7 @@ shared_examples_for 'a delayed_job backend' do
         it 'marks the job as failed' do
           Delayed::Worker.destroy_failed_jobs = false
           job = described_class.create! :handler => '--- !ruby/object:JobThatDoesNotExist {}'
+          expect_any_instance_of(described_class).to receive(:destroy_failed_jobs?).and_return(false)
           worker.work_off
           job.reload
           expect(job).to be_failed
@@ -483,6 +565,7 @@ shared_examples_for 'a delayed_job backend' do
         Delayed::Worker.max_attempts = 1
         worker.run(@job)
         @job.reload
+        expect(@job.error).to_not be_nil
         expect(@job.last_error).to match(/did not work/)
         expect(@job.attempts).to eq(1)
         expect(@job).to be_failed
@@ -565,9 +648,20 @@ shared_examples_for 'a delayed_job backend' do
       end
 
       context 'and we want to destroy jobs' do
+        after do
+          Delayed::Worker.destroy_failed_jobs = true
+        end
+
         it_behaves_like 'any failure more than Worker.max_attempts times'
 
         it 'is destroyed if it failed more than Worker.max_attempts times' do
+          expect(@job).to receive(:destroy)
+          Delayed::Worker.max_attempts.times { worker.reschedule(@job) }
+        end
+
+        it 'is destroyed if the job has destroy failed jobs set' do
+          Delayed::Worker.destroy_failed_jobs = false
+          expect(@job).to receive(:destroy_failed_jobs?).and_return(true)
           expect(@job).to receive(:destroy)
           Delayed::Worker.max_attempts.times { worker.reschedule(@job) }
         end
@@ -589,15 +683,35 @@ shared_examples_for 'a delayed_job backend' do
 
         it_behaves_like 'any failure more than Worker.max_attempts times'
 
-        it 'is failed if it failed more than Worker.max_attempts times' do
-          expect(@job.reload).not_to be_failed
-          Delayed::Worker.max_attempts.times { worker.reschedule(@job) }
-          expect(@job.reload).to be_failed
+        context 'and destroy failed jobs is false' do
+          it 'is failed if it failed more than Worker.max_attempts times' do
+            expect(@job.reload).not_to be_failed
+            Delayed::Worker.max_attempts.times { worker.reschedule(@job) }
+            expect(@job.reload).to be_failed
+          end
+
+          it 'is not failed if it failed fewer than Worker.max_attempts times' do
+            (Delayed::Worker.max_attempts - 1).times { worker.reschedule(@job) }
+            expect(@job.reload).not_to be_failed
+          end
         end
 
-        it 'is not failed if it failed fewer than Worker.max_attempts times' do
-          (Delayed::Worker.max_attempts - 1).times { worker.reschedule(@job) }
-          expect(@job.reload).not_to be_failed
+        context 'and destroy failed jobs for job is false' do
+          before do
+            Delayed::Worker.destroy_failed_jobs = true
+          end
+
+          it 'is failed if it failed more than Worker.max_attempts times' do
+            expect(@job).to receive(:destroy_failed_jobs?).and_return(false)
+            expect(@job.reload).not_to be_failed
+            Delayed::Worker.max_attempts.times { worker.reschedule(@job) }
+            expect(@job.reload).to be_failed
+          end
+
+          it 'is not failed if it failed fewer than Worker.max_attempts times' do
+            (Delayed::Worker.max_attempts - 1).times { worker.reschedule(@job) }
+            expect(@job.reload).not_to be_failed
+          end
         end
       end
     end

@@ -1,22 +1,3 @@
-if defined?(ActiveRecord)
-  ActiveRecord::Base.class_eval do
-    # rubocop:disable BlockNesting
-    if instance_methods.include?(:encode_with)
-      def encode_with_override(coder)
-        encode_with_without_override(coder)
-        coder.tag = "!ruby/ActiveRecord:#{self.class.name}" if coder.respond_to?(:tag=)
-      end
-      alias_method :encode_with_without_override, :encode_with
-      alias_method :encode_with, :encode_with_override
-    else
-      def encode_with(coder)
-        coder['attributes'] = attributes
-        coder.tag = "!ruby/ActiveRecord:#{self.class.name}" if coder.respond_to?(:tag=)
-      end
-    end
-  end
-end
-
 module Delayed
   class PerformableMethod
     # serialize to YAML
@@ -31,51 +12,78 @@ module Delayed
 end
 
 module Psych
-  module Visitors
-    class ToRuby
-      def visit_Psych_Nodes_Mapping_with_class(object) # rubocop:disable CyclomaticComplexity, MethodName
+  def self.load_dj(yaml)
+    result = parse(yaml)
+    result ? Delayed::PsychExt::ToRuby.create.accept(result) : result
+  end
+end
+
+module Delayed
+  module PsychExt
+    class ToRuby < Psych::Visitors::ToRuby
+      unless respond_to?(:create)
+        def self.create
+          new
+        end
+      end
+
+      def visit_Psych_Nodes_Mapping(object) # rubocop:disable CyclomaticComplexity, MethodName, PerceivedComplexity
         return revive(Psych.load_tags[object.tag], object) if Psych.load_tags[object.tag]
 
         case object.tag
+        when /^!ruby\/object/
+          result = super
+          if defined?(ActiveRecord::Base) && result.is_a?(ActiveRecord::Base)
+            klass = result.class
+            id = result[klass.primary_key]
+            begin
+              klass.find(id)
+            rescue ActiveRecord::RecordNotFound => error # rubocop:disable BlockNesting
+              raise Delayed::DeserializationError, "ActiveRecord::RecordNotFound, class: #{klass}, primary key: #{id} (#{error.message})"
+            end
+          else
+            result
+          end
         when /^!ruby\/ActiveRecord:(.+)$/
           klass = resolve_class(Regexp.last_match[1])
-          payload = Hash[*object.children.collect { |c| accept c }]
+          payload = Hash[*object.children.map { |c| accept c }]
           id = payload['attributes'][klass.primary_key]
+          id = id.value if defined?(ActiveRecord::Attribute) && id.is_a?(ActiveRecord::Attribute)
           begin
             klass.unscoped.find(id)
-          rescue ActiveRecord::RecordNotFound
-            raise Delayed::DeserializationError
+          rescue ActiveRecord::RecordNotFound => error
+            raise Delayed::DeserializationError, "ActiveRecord::RecordNotFound, class: #{klass}, primary key: #{id} (#{error.message})"
           end
         when /^!ruby\/Mongoid:(.+)$/
           klass = resolve_class(Regexp.last_match[1])
-          payload = Hash[*object.children.collect { |c| accept c }]
+          payload = Hash[*object.children.map { |c| accept c }]
+          id = payload['attributes']['_id']
           begin
-            klass.find(payload['attributes']['_id'])
-          rescue Mongoid::Errors::DocumentNotFound
-            raise Delayed::DeserializationError
+            klass.find(id)
+          rescue Mongoid::Errors::DocumentNotFound => error
+            raise Delayed::DeserializationError, "Mongoid::Errors::DocumentNotFound, class: #{klass}, primary key: #{id} (#{error.message})"
           end
         when /^!ruby\/DataMapper:(.+)$/
           klass = resolve_class(Regexp.last_match[1])
-          payload = Hash[*object.children.collect { |c| accept c }]
+          payload = Hash[*object.children.map { |c| accept c }]
           begin
-            primary_keys = klass.properties.select { |p| p.key? }
-            key_names = primary_keys.collect { |p| p.name.to_s }
-            klass.get!(*key_names.collect { |k| payload['attributes'][k] })
-          rescue DataMapper::ObjectNotFoundError
-            raise Delayed::DeserializationError
+            primary_keys = klass.properties.select(&:key?)
+            key_names = primary_keys.map { |p| p.name.to_s }
+            klass.get!(*key_names.map { |k| payload['attributes'][k] })
+          rescue DataMapper::ObjectNotFoundError => error
+            raise Delayed::DeserializationError, "DataMapper::ObjectNotFoundError, class: #{klass} (#{error.message})"
           end
         else
-          visit_Psych_Nodes_Mapping_without_class(object)
+          super
         end
       end
-      alias_method_chain :visit_Psych_Nodes_Mapping, :class
 
-      def resolve_class_with_constantize(klass_name)
+      def resolve_class(klass_name)
+        return nil if !klass_name || klass_name.empty?
         klass_name.constantize
       rescue
-        resolve_class_without_constantize(klass_name)
+        super
       end
-      alias_method_chain :resolve_class, :constantize
     end
   end
 end

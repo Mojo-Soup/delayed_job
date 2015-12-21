@@ -1,4 +1,5 @@
-class NamedJob < Struct.new(:perform)
+NamedJob = Struct.new(:perform)
+class NamedJob
   def display_name
     'named_job'
   end
@@ -12,19 +13,26 @@ class SimpleJob
   end
 end
 
+class NamedQueueJob < SimpleJob
+  def queue_name
+    'job_tracking'
+  end
+end
+
 class ErrorJob
   cattr_accessor :runs
   @runs = 0
   def perform
-    fail 'did not work'
+    raise Exception, 'did not work'
   end
 end
 
-class CustomRescheduleJob < Struct.new(:offset)
+CustomRescheduleJob = Struct.new(:offset)
+class CustomRescheduleJob
   cattr_accessor :runs
   @runs = 0
   def perform
-    fail 'did not work'
+    raise 'did not work'
   end
 
   def reschedule_at(time, _attempts)
@@ -46,7 +54,7 @@ class OnPermanentFailureJob < SimpleJob
   end
 
   def failure
-    fail 'did not work' if @raise_error
+    raise 'did not work' if @raise_error
   end
 
   def max_attempts

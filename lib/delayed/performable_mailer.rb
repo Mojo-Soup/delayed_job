@@ -3,7 +3,8 @@ require 'mail'
 module Delayed
   class PerformableMailer < PerformableMethod
     def perform
-      object.send(method_name, *args).deliver
+      mailer = object.send(method_name, *args)
+      mailer.respond_to?(:deliver_now) ? mailer.deliver_now : mailer.deliver
     end
   end
 
@@ -16,6 +17,6 @@ end
 
 Mail::Message.class_eval do
   def delay(*_args)
-    fail 'Use MyMailer.delay.mailer_action(args) to delay sending of emails.'
+    raise 'Use MyMailer.delay.mailer_action(args) to delay sending of emails.'
   end
 end

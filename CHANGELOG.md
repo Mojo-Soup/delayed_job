@@ -1,3 +1,45 @@
+4.1.1 - 2015-09-24
+==================
+* Fix shared specs for back-ends that reload objects
+
+4.1.0 - 2015-09-22
+==================
+* Alter `Delayed::Command` to work with or without Rails
+* Allow `Delayed::Worker.delay_jobs` configuration to be a proc
+* Add ability to set destroy failed jobs on a per job basis
+* Make `Delayed::Worker.new` idempotent
+* Set quiet from the environment
+* Rescue `Exception` instead of `StandardError` in worker
+* Fix worker crash on serialization error
+
+4.0.6 - 2014-12-22
+==================
+* Revert removing test files from the gem
+
+4.0.5 - 2014-12-22
+==================
+* Support for Rails 4.2
+* Allow user to override where DJ writes log output
+* First attempt at automatic code reloading
+* Clearer error message when ActiveRecord object no longer exists
+* Various improvements to the README
+
+4.0.4 - 2014-09-24
+==================
+* Fix using options passed into delayed_job command
+* Add the ability to set a default queue for a custom job
+* Add the ability to override the max_run_time on a custom job. MUST be lower than worker setting
+* Psych YAML overrides are now exclusively used only when loading a job payload
+* SLEEP_DELAY and READ_AHEAD can be set for the rake task
+* Some updates for Rails 4.2 support
+
+4.0.3 - 2014-09-04
+==================
+* Added --pools option to delayed_job command
+* Removed a bunch of the Psych hacks
+* Improved deserialization error reporting
+* Misc bug fixes
+
 4.0.2 - 2014-06-24
 ==================
 * Add support for RSpec 3

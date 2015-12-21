@@ -9,13 +9,17 @@ module Delayed
 
       module ClassMethods
         # Add a job to the queue
-        def enqueue(*args)
-          options = {
-            :priority => Delayed::Worker.default_priority,
-            :queue => Delayed::Worker.default_queue_name
-          }.merge!(args.extract_options!)
-
+        def enqueue(*args) # rubocop:disable CyclomaticComplexity
+          options = args.extract_options!
           options[:payload_object] ||= args.shift
+          options[:priority] ||= Delayed::Worker.default_priority
+
+          if options[:queue].nil?
+            if options[:payload_object].respond_to?(:queue_name)
+              options[:queue] = options[:payload_object].queue_name
+            end
+            options[:queue] ||= Delayed::Worker.default_queue_name
+          end
 
           if args.size > 0
             warn '[DEPRECATION] Passing multiple arguments to `#enqueue` is deprecated. Pass a hash with :priority and :run_at.'
@@ -24,19 +28,13 @@ module Delayed
           end
 
           unless options[:payload_object].respond_to?(:perform)
-            fail(ArgumentError.new('Cannot enqueue items which do not respond to perform'))
+            raise ArgumentError, 'Cannot enqueue items which do not respond to perform'
           end
 
-          if Delayed::Worker.delay_jobs
-            new(options).tap do |job|
-              Delayed::Worker.lifecycle.run_callbacks(:enqueue, job) do
-                job.hook(:enqueue)
-                job.save
-              end
-            end
-          else
-            Delayed::Job.new(:payload_object => options[:payload_object]).tap do |job|
-              job.invoke_job
+          new(options).tap do |job|
+            Delayed::Worker.lifecycle.run_callbacks(:enqueue, job) do
+              job.hook(:enqueue)
+              Delayed::Worker.delay_job?(job) ? job.save : job.invoke_job
             end
           end
         end
@@ -78,6 +76,12 @@ module Delayed
 
       end
 
+      attr_reader :error
+      def error=(error)
+        @error = error
+        self.last_error = "#{error.message}\n#{error.backtrace.join("\n")}" if self.respond_to?(:last_error=)
+      end
+
       def failed?
         !!failed_at
       end
@@ -112,15 +116,9 @@ module Delayed
       end
 
       def payload_object
-        if YAML.respond_to?(:unsafe_load)
-          # See https://github.com/dtao/safe_yaml
-          # When the method is there, we need to load our YAML like this...
-          @payload_object ||= YAML.load(handler, :safe => false)
-        else
-          @payload_object ||= YAML.load(handler)
-        end
-      rescue TypeError, LoadError, NameError, ArgumentError => e
-        raise(DeserializationError.new("Job failed to load: #{e.message}. Handler: #{handler.inspect}"))
+        @payload_object ||= YAML.load_dj(handler)
+      rescue TypeError, LoadError, NameError, ArgumentError, SyntaxError, Psych::SyntaxError => e
+        raise DeserializationError, "Job failed to load: #{e.message}. Handler: #{handler.inspect}"
       end
 
       def invoke_job
@@ -129,7 +127,7 @@ module Delayed
             hook :before
             payload_object.perform
             hook :success
-          rescue => e
+          rescue Exception => e # rubocop:disable RescueException
             hook :error, e
             raise e
           ensure
@@ -162,6 +160,23 @@ module Delayed
 
       def max_attempts
         payload_object.max_attempts if payload_object.respond_to?(:max_attempts)
+      end
+
+      def max_run_time
+        return unless payload_object.respond_to?(:max_run_time)
+        return unless (run_time = payload_object.max_run_time)
+
+        if run_time > Delayed::Worker.max_run_time
+          Delayed::Worker.max_run_time
+        else
+          run_time
+        end
+      end
+
+      def destroy_failed_jobs?
+        payload_object.respond_to?(:destroy_failed_jobs?) ? payload_object.destroy_failed_jobs? : Delayed::Worker.destroy_failed_jobs
+      rescue DeserializationError
+        Delayed::Worker.destroy_failed_jobs
       end
 
       def fail!
