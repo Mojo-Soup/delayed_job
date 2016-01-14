@@ -235,14 +235,14 @@ module Delayed
       # Use UUID and tagged logging
       Thread::current[:request_uuid] = job.uuid if job.respond_to?(:uuid) and job.uuid
 
-      tagged_logger.tagged("#{Thread::current[:request_uuid]}") {
+      #tagged_logger.tagged("#{Thread::current[:request_uuid]}") {
         job_say job, 'RUNNING'
         runtime =  Benchmark.realtime do
           Timeout.timeout(max_run_time(job).to_i, WorkerTimeout) { job.invoke_job }
           job.destroy
         end
         job_say job, format('COMPLETED after %.4f', runtime)
-      }
+      #}
       Thread::current[:request_uuid] = nil
       return true  # did work
     rescue ResubmitJobError
@@ -300,7 +300,7 @@ module Delayed
       unless level.is_a?(String)
         level = Logger::Severity.constants.detect { |i| Logger::Severity.const_get(i) == level }.to_s.downcase
       end
-      tagged_logger.send(level, text)
+      logger.send(level, text)
     end
 
     def max_attempts(job)
