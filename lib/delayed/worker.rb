@@ -245,7 +245,7 @@ module Delayed
       return true  # did work
     rescue ResubmitJobError
       Thread::current[:request_uuid] = nil
-      job_say job, 'RESUBMITTED'
+      job_say job, "RESUBMITTED (subj: '#{job.subject_id}', q: '#{job.queue}') "
       return true
     rescue DeserializationError => error
       Thread::current[:request_uuid] = nil
