@@ -187,6 +187,13 @@ module Delayed
         self.urgent_worker = preferred_worker
         old_queue = self.queue
         self.queue = new_queue
+
+        new_priority = 100
+        new_priority = priority - 1 if old_queue == 'sync-urgent' and priority > 1
+
+        # First, set the priority on the existing item (to be rescheduled)
+        self.priority = new_priority
+
         unlock
         save!
 
@@ -198,13 +205,21 @@ module Delayed
           c = ::ActiveRecord::Base.connection
           limit = Delayed::Worker.max_reschedule
 
+          # We can either make the job more urgent (decrease the 'priority' value) or set the run_at to be earlier
+          # than other jobs if it keeps being rescheduled as urgent. This mostly occurs when jobs get moved around
+          # workers frequently (the "urgent" work queue is longer). This increases the probability that it will be done
+          # more immediately when a connection semaphore is available immediately shortly thereafter.
+          #
+          # NOTE: You must be careful to ensure that we don't set a --min-priority or --max-priority for the DJ worker!
+
           # Use an advisory lock to avoid locking any records that are already locked
           # NOTE: Postgres specific ('pg_try_advisory_lock', 'cmd_tuples')
           subquery = "SELECT id FROM delayed_jobs WHERE job_type='SoupSync::SyncFolderJob'" \
                      "AND queue='#{old_queue}' AND subject_id LIKE '#{user_id}/%' " \
                      'AND locked_by IS NULL AND failed_at IS NULL ' \
                      "AND pg_try_advisory_lock(id) LIMIT #{limit} FOR UPDATE"
-          query = "UPDATE delayed_jobs SET urgent_worker='#{preferred_worker}', queue='#{new_queue}' WHERE id IN (#{subquery}); " \
+          query = "UPDATE delayed_jobs SET urgent_worker='#{preferred_worker}', " \
+                  "queue='#{new_queue}', priority=#{new_priority} WHERE id IN (#{subquery}); " \
                   'SELECT pg_advisory_unlock_all();'
           r=c.execute(query)
           affected_rows = r.cmd_tuples
