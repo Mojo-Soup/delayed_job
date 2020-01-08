@@ -1,22 +1,24 @@
 require 'timeout'
+require 'active_support/dependencies'
 require 'active_support/core_ext/numeric/time'
 require 'active_support/core_ext/class/attribute_accessors'
-require 'active_support/core_ext/kernel'
-require 'active_support/core_ext/enumerable'
+require 'active_support/hash_with_indifferent_access'
+require 'active_support/core_ext/hash/indifferent_access'
 require 'logger'
 require 'benchmark'
 
 module Delayed
   class Worker # rubocop:disable ClassLength
-    DEFAULT_LOG_LEVEL        = 'info'
+    DEFAULT_LOG_LEVEL        = 'info'.freeze
     DEFAULT_SLEEP_DELAY      = 5
     DEFAULT_MAX_ATTEMPTS     = 25
     DEFAULT_MAX_RUN_TIME     = 4.hours
     DEFAULT_DEFAULT_PRIORITY = 0
     DEFAULT_DELAY_JOBS       = true
-    DEFAULT_QUEUES           = []
+    DEFAULT_QUEUES           = [].freeze
     DEFAULT_PRIORITY_QUEUES  = []
     DEFAULT_IGNORE_PRIORITY  = 20.minutes
+    DEFAULT_QUEUE_ATTRIBUTES = HashWithIndifferentAccess.new.freeze
     DEFAULT_READ_AHEAD       = 5
     DEFAULT_MAX_RESCHEDULE   = 10
 
@@ -27,7 +29,7 @@ module Delayed
     # Named queue into which jobs are enqueued by default
     cattr_accessor :default_queue_name
 
-    cattr_reader :backend
+    cattr_reader :backend, :queue_attributes
 
     # name_prefix is ignored if name is set directly
     attr_accessor :name_prefix
@@ -40,14 +42,13 @@ module Delayed
       self.default_priority = DEFAULT_DEFAULT_PRIORITY
       self.delay_jobs       = DEFAULT_DELAY_JOBS
       self.queues           = DEFAULT_QUEUES
+      self.queue_attributes = DEFAULT_QUEUE_ATTRIBUTES
       self.priority_queues  = DEFAULT_PRIORITY_QUEUES
       self.ignore_priority  = DEFAULT_IGNORE_PRIORITY
       self.read_ahead       = DEFAULT_READ_AHEAD
       self.max_reschedule   = DEFAULT_MAX_RESCHEDULE
       @lifecycle             = nil
     end
-
-    reset
 
     # Add or remove plugins in this list before the worker is instantiated
     self.plugins = [Delayed::Plugins::ClearLocks]
@@ -73,6 +74,11 @@ module Delayed
       end
       @@backend = backend # rubocop:disable ClassVars
       silence_warnings { ::Delayed.const_set(:Job, backend) }
+    end
+
+    # rubocop:disable ClassVars
+    def self.queue_attributes=(val)
+      @@queue_attributes = val.with_indifferent_access
     end
 
     def self.guess_backend
@@ -179,7 +185,7 @@ module Delayed
             end
           end
 
-          count = @result.sum
+          count = @result[0] + @result[1]
 
           if count.zero?
             if self.class.exit_on_complete
@@ -250,6 +256,9 @@ module Delayed
     rescue DeserializationError => error
       Thread::current[:request_uuid] = nil
       job.last_error = "#{error.message}\n#{error.backtrace.join("\n")}"
+      job_say job, "FAILED permanently with #{error.class.name}: #{error.message}", 'error'
+
+      job.error = error
       failed(job)
     rescue => error
       Thread::current[:request_uuid] = nil
@@ -266,7 +275,7 @@ module Delayed
         job.unlock
         job.save!
       else
-        job_say job, "REMOVED permanently because of #{job.attempts} consecutive failures", 'error'
+        job_say job, "FAILED permanently because of #{job.attempts} consecutive failures", 'error'
         failed(job)
       end
     end
@@ -285,7 +294,7 @@ module Delayed
     end
 
     def job_say(job, text, level = default_log_level)
-      text = "Job #{job.name} (id=#{job.id}) #{text}"
+      text = "Job #{job.name} (id=#{job.id})#{say_queue(job.queue)} #{text}"
       say text, level
     end
 
@@ -311,6 +320,10 @@ module Delayed
     end
 
   protected
+
+    def say_queue(queue)
+      " (queue=#{queue})" if queue
+    end
 
     def handle_failed_job(job, error)
       job.error = error
@@ -339,8 +352,14 @@ module Delayed
 
     def reload!
       return unless self.class.reload_app?
-      ActionDispatch::Reloader.cleanup!
-      ActionDispatch::Reloader.prepare!
+      if defined?(ActiveSupport::Reloader)
+        Rails.application.reloader.reload!
+      else
+        ActionDispatch::Reloader.cleanup!
+        ActionDispatch::Reloader.prepare!
+      end
     end
   end
 end
+
+Delayed::Worker.reset

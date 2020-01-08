@@ -1,6 +1,6 @@
 require File.expand_path('../../../../spec/sample_jobs', __FILE__)
 
-require 'active_support/core_ext'
+require 'active_support/core_ext/numeric/time'
 
 shared_examples_for 'a delayed_job backend' do
   let(:worker) { Delayed::Worker.new }
@@ -112,6 +112,12 @@ shared_examples_for 'a delayed_job backend' do
         M::ModuleJob.runs = 0
         job = described_class.enqueue M::ModuleJob.new
         expect { job.invoke_job }.to change { M::ModuleJob.runs }.from(0).to(1)
+      end
+
+      it 'does not mutate the options hash' do
+        options = {:priority => 1}
+        described_class.enqueue SimpleJob.new, options
+        expect(options).to eq(:priority => 1)
       end
     end
 
@@ -279,6 +285,7 @@ shared_examples_for 'a delayed_job backend' do
     after do
       Delayed::Worker.max_priority = nil
       Delayed::Worker.min_priority = nil
+      Delayed::Worker.queue_attributes = {}
     end
 
     it 'fetches jobs ordered by priority' do
@@ -313,6 +320,18 @@ shared_examples_for 'a delayed_job backend' do
         job.destroy
       end
       expect(described_class.reserve(worker)).to be_nil
+    end
+
+    it 'sets job priority based on queue_attributes configuration' do
+      Delayed::Worker.queue_attributes = {'job_tracking' => {:priority => 4}}
+      job = described_class.enqueue :payload_object => NamedQueueJob.new
+      expect(job.priority).to eq(4)
+    end
+
+    it 'sets job priority based on the passed in priority overrideing queue_attributes configuration' do
+      Delayed::Worker.queue_attributes = {'job_tracking' => {:priority => 4}}
+      job = described_class.enqueue :payload_object => NamedQueueJob.new, :priority => 10
+      expect(job.priority).to eq(10)
     end
   end
 
@@ -504,7 +523,8 @@ shared_examples_for 'a delayed_job backend' do
       it 'reloads changed attributes' do
         story = Story.create(:text => 'hello')
         job = story.delay.tell
-        story.update_attributes :text => 'goodbye'
+        story.text = 'goodbye'
+        story.save!
         expect(job.reload.payload_object.object.text).to eq('goodbye')
       end
 

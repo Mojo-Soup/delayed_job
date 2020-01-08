@@ -8,6 +8,6 @@ module Delayed
     end
   end
 
-  class FatalBackendError < Exception; end
+  class FatalBackendError < RuntimeError; end
   class ResubmitJobError < StandardError; end
 end

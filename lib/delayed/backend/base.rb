@@ -9,28 +9,12 @@ module Delayed
 
       module ClassMethods
         # Add a job to the queue
-        def enqueue(*args) # rubocop:disable CyclomaticComplexity
-          options = args.extract_options!
-          options[:payload_object] ||= args.shift
-          options[:priority] ||= Delayed::Worker.default_priority
+        def enqueue(*args)
+          job_options = Delayed::Backend::JobPreparer.new(*args).prepare
+          enqueue_job(job_options)
+        end
 
-          if options[:queue].nil?
-            if options[:payload_object].respond_to?(:queue_name)
-              options[:queue] = options[:payload_object].queue_name
-            end
-            options[:queue] ||= Delayed::Worker.default_queue_name
-          end
-
-          if args.size > 0
-            warn '[DEPRECATION] Passing multiple arguments to `#enqueue` is deprecated. Pass a hash with :priority and :run_at.'
-            options[:priority] = args.first || options[:priority]
-            options[:run_at]   = args[1]
-          end
-
-          unless options[:payload_object].respond_to?(:perform)
-            raise ArgumentError, 'Cannot enqueue items which do not respond to perform'
-          end
-
+        def enqueue_job(options)
           new(options).tap do |job|
             Delayed::Worker.lifecycle.run_callbacks(:enqueue, job) do
               job.hook(:enqueue)
@@ -48,16 +32,13 @@ module Delayed
         end
 
         # Allow the backend to attempt recovery from reserve errors
-        def recover_from(_error)
-        end
+        def recover_from(_error); end
 
         # Hook method that is called before a new worker is forked
-        def before_fork
-        end
+        def before_fork; end
 
         # Hook method that is called after a new worker is forked
-        def after_fork
-        end
+        def after_fork; end
 
         def work_off(num = 100)
           warn '[DEPRECATION] `Delayed::Job.work_off` is deprecated. Use `Delayed::Worker.new.work_off instead.'
@@ -79,7 +60,7 @@ module Delayed
       attr_reader :error
       def error=(error)
         @error = error
-        self.last_error = "#{error.message}\n#{error.backtrace.join("\n")}" if self.respond_to?(:last_error=)
+        self.last_error = "#{error.message}\n#{error.backtrace.join("\n")}" if respond_to?(:last_error=)
       end
 
       def failed?
@@ -87,7 +68,7 @@ module Delayed
       end
       alias_method :failed, :failed?
 
-      ParseObjectFromYaml = /\!ruby\/\w+\:([^\s]+)/ # rubocop:disable ConstantName
+      ParseObjectFromYaml = %r{\!ruby/\w+\:([^\s]+)} # rubocop:disable ConstantName
 
       def name
         @name ||= payload_object.respond_to?(:display_name) ? payload_object.display_name : payload_object.class.name
@@ -145,7 +126,7 @@ module Delayed
       def hook(name, *args)
         if payload_object.respond_to?(name)
           method = payload_object.method(name)
-          method.arity == 0 ? method.call : method.call(self, *args)
+          method.arity.zero? ? method.call : method.call(self, *args)
         end
       rescue DeserializationError # rubocop:disable HandleExceptions
       end
@@ -180,7 +161,8 @@ module Delayed
       end
 
       def fail!
-        update_attributes(:failed_at => self.class.db_time_now)
+        self.failed_at = self.class.db_time_now
+        save!
       end
 
       def resubmit_as_urgent!(preferred_worker, new_queue)

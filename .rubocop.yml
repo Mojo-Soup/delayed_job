@@ -5,11 +5,21 @@ AbcSize:
 AccessModifierIndentation:
   EnforcedStyle: outdent
 
+Alias:
+  EnforcedStyle: prefer_alias_method
+
 AllCops:
   Include:
     - 'Gemfile'
     - 'Rakefile'
     - 'delayed_job.gemspec'
+  TargetRubyVersion: 2.1
+
+RedundantBlockCall:
+  Enabled: false
+
+BlockLength:
+  Enabled: false
 
 # Avoid more than `Max` levels of nesting.
 BlockNesting:
@@ -17,7 +27,7 @@ BlockNesting:
 
 # Indentation of when/else
 CaseIndentation:
-  IndentWhenRelativeTo: end
+  EnforcedStyle: end
   IndentOneStep: false
 
 ClassLength:
@@ -43,6 +53,10 @@ DotPosition:
 DoubleNegation:
   Enabled: false
 
+# Detects any duplication as issue including our conditional requires
+DuplicatedGem:
+  Enabled: false
+
 EmptyLinesAroundAccessModifier:
   Enabled: true
 
@@ -52,7 +66,10 @@ Encoding:
 
 # Align ends correctly
 EndAlignment:
-  AlignWith: variable
+  EnforcedStyleAlignWith: variable
+
+Style/FrozenStringLiteralComment:
+  Enabled: false
 
 # Enforce Ruby 1.8-compatible hash syntax
 HashSyntax:
@@ -70,6 +87,9 @@ MethodLength:
 
 MultilineOperationIndentation:
   EnforcedStyle: indented
+
+Style/NumericPredicate:
+  Enabled: false
 
 # Avoid long parameter lists
 ParameterLists:
@@ -97,6 +117,9 @@ RegexpLiteral:
 RescueModifier:
   Enabled: false
 
+Style/SafeNavigation:
+  Enabled: false
+
 SignalException:
   EnforcedStyle: only_raise
 
@@ -104,8 +127,20 @@ SignalException:
 SpaceInsideHashLiteralBraces:
   EnforcedStyle: no_space
 
+Style/SymbolArray:
+  Enabled: false
+
 SymbolProc:
   Enabled: false
 
-TrailingComma:
+TrailingCommaInLiteral:
+  Enabled: false
+
+TrailingCommaInArguments:
+  Enabled: false
+
+YAMLLoad:
+  Enabled: false
+
+ZeroLengthPredicate:
   Enabled: false
