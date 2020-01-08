@@ -1,5 +1,5 @@
 module Delayed
-  class InvalidCallback < Exception; end
+  class InvalidCallback < RuntimeError; end
 
   class Lifecycle
     EVENTS = {
@@ -10,7 +10,7 @@ module Delayed
       :error      => [:worker, :job],
       :failure    => [:worker, :job],
       :invoke_job => [:job]
-    }
+    }.freeze
 
     def initialize
       @callbacks = EVENTS.keys.each_with_object({}) do |e, hash|

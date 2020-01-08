@@ -28,23 +28,29 @@ module Delayed
       end
 
       def visit_Psych_Nodes_Mapping(object) # rubocop:disable CyclomaticComplexity, MethodName, PerceivedComplexity
-        return revive(Psych.load_tags[object.tag], object) if Psych.load_tags[object.tag]
+        klass = Psych.load_tags[object.tag]
+        if klass
+          # Implementation changed here https://github.com/ruby/psych/commit/2c644e184192975b261a81f486a04defa3172b3f
+          # load_tags used to have class values, now the values are strings
+          klass = resolve_class(klass) if klass.is_a?(String)
+          return revive(klass, object)
+        end
 
         case object.tag
-        when /^!ruby\/object/
+        when %r{^!ruby/object}
           result = super
-          if defined?(ActiveRecord::Base) && result.is_a?(ActiveRecord::Base)
+          if jruby_is_seriously_borked && result.is_a?(ActiveRecord::Base)
             klass = result.class
             id = result[klass.primary_key]
             begin
-              klass.find(id)
+              klass.unscoped.find(id)
             rescue ActiveRecord::RecordNotFound => error # rubocop:disable BlockNesting
               raise Delayed::DeserializationError, "ActiveRecord::RecordNotFound, class: #{klass}, primary key: #{id} (#{error.message})"
             end
           else
             result
           end
-        when /^!ruby\/ActiveRecord:(.+)$/
+        when %r{^!ruby/ActiveRecord:(.+)$}
           klass = resolve_class(Regexp.last_match[1])
           payload = Hash[*object.children.map { |c| accept c }]
           id = payload['attributes'][klass.primary_key]
@@ -54,7 +60,7 @@ module Delayed
           rescue ActiveRecord::RecordNotFound => error
             raise Delayed::DeserializationError, "ActiveRecord::RecordNotFound, class: #{klass}, primary key: #{id} (#{error.message})"
           end
-        when /^!ruby\/Mongoid:(.+)$/
+        when %r{^!ruby/Mongoid:(.+)$}
           klass = resolve_class(Regexp.last_match[1])
           payload = Hash[*object.children.map { |c| accept c }]
           id = payload['attributes']['_id']
@@ -63,7 +69,7 @@ module Delayed
           rescue Mongoid::Errors::DocumentNotFound => error
             raise Delayed::DeserializationError, "Mongoid::Errors::DocumentNotFound, class: #{klass}, primary key: #{id} (#{error.message})"
           end
-        when /^!ruby\/DataMapper:(.+)$/
+        when %r{^!ruby/DataMapper:(.+)$}
           klass = resolve_class(Regexp.last_match[1])
           payload = Hash[*object.children.map { |c| accept c }]
           begin
@@ -76,6 +82,13 @@ module Delayed
         else
           super
         end
+      end
+
+      # defined? is triggering something really messed up in
+      # jruby causing both the if AND else clauses to execute,
+      # however if the check is run here, everything is fine
+      def jruby_is_seriously_borked
+        defined?(ActiveRecord::Base)
       end
 
       def resolve_class(klass_name)

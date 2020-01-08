@@ -1,6 +1,11 @@
 require 'helper'
 
 describe Delayed::MessageSending do
+  it 'does not include ClassMethods along with MessageSending' do
+    expect { ClassMethods }.to raise_error(NameError)
+    expect(defined?(String::ClassMethods)).to eq(nil)
+  end
+
   describe 'handle_asynchronously' do
     class Story
       def tell!(_arg); end
@@ -19,7 +24,7 @@ describe Delayed::MessageSending do
         expect(job.payload_object.class).to eq(Delayed::PerformableMethod)
         expect(job.payload_object.method_name).to eq(:tell_without_delay!)
         expect(job.payload_object.args).to eq([1])
-      end.to change { Delayed::Job.count }
+      end.to(change { Delayed::Job.count })
     end
 
     describe 'with options' do
@@ -42,8 +47,7 @@ describe Delayed::MessageSending do
       describe 'using a proc with parameters' do
         class Yarn
           attr_accessor :importance
-          def spin
-          end
+          def spin; end
           handle_asynchronously :spin, :priority => proc { |y| y.importance }
         end
 
@@ -107,7 +111,7 @@ describe Delayed::MessageSending do
         expect do
           fairy_tail.delay.tell
         end.to change(fairy_tail, :happy_ending).from(nil).to(true)
-      end.not_to change { Delayed::Job.count }
+      end.not_to(change { Delayed::Job.count })
     end
 
     it 'does delay the job when delay_jobs is true' do
@@ -137,7 +141,7 @@ describe Delayed::MessageSending do
         expect do
           fairy_tail.delay.tell
         end.to change(fairy_tail, :happy_ending).from(nil).to(true)
-      end.not_to change { Delayed::Job.count }
+      end.not_to(change { Delayed::Job.count })
     end
   end
 end
